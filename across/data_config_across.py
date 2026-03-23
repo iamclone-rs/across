@@ -23,20 +23,23 @@ ACROSS_DATASET_CLASSES = {
         "tv",
     ],
     "quickdraw": [
-        "bandage",
-        "beach",
+        # "bandage",
+        "horse",
         "bus",
         "cake",
-        "campfire",
+        "airplane",
         "cruise ship",
         "eiffel tower",
-        "fire_hydrant",
-        "map",
+        # "fire_hydrant",
+        # "map",
         "megaphone",
-        "moon",
+        "tree",
         "palm tree",
         "parrot",
         "windmill"
     ],
 }
+
+
+
 

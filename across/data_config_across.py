@@ -31,11 +31,16 @@ ACROSS_DATASET_CLASSES = {
         "cruise ship",
         "eiffel tower",
         "fire_hydrant",
-        "map",
-        "megaphone",
-        "moon",
+        "palm tree",
+        "parrot",
+        "windmill"
     ],
 }
 
 # Backward-compatible alias for any earlier local imports.
 USEEN_CLASSES = ACROSS_DATASET_CLASSES
+'''
+"palm tree",
+"parrot",
+"windmill"
+'''

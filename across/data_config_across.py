@@ -25,9 +25,9 @@ ACROSS_DATASET_CLASSES = {
     "quickdraw": [
         "bandage",
         "beach",
-        "bus",
-        "cake",
-        "campfire",
+        "map",
+        "megaphone",
+        "moon",
         "cruise ship",
         "eiffel tower",
         "fire_hydrant",
@@ -40,7 +40,7 @@ ACROSS_DATASET_CLASSES = {
 # Backward-compatible alias for any earlier local imports.
 USEEN_CLASSES = ACROSS_DATASET_CLASSES
 '''
-"palm tree",
-"parrot",
-"windmill"
+"bus",
+"cake",
+"campfire",
 '''

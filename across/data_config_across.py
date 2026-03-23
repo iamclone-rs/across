@@ -19,7 +19,7 @@ ACROSS_DATASET_CLASSES = {
         "horse",
         "suv",
         "floor lamp",
-        "pipe (for smoking)",
+        # "pipe (for smoking)",
         "tv",
     ],
     "quickdraw": [

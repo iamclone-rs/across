@@ -287,7 +287,14 @@ def extract_features(model, dataloader, classnames, image_type, device):
     return torch.cat(features, dim=0), torch.cat(labels, dim=0)
 
 
-def compute_retrieval_metrics(query_features, query_labels, gallery_features, gallery_labels, precision_at):
+def compute_retrieval_metrics(
+    query_features,
+    query_labels,
+    gallery_features,
+    gallery_labels,
+    classnames,
+    precision_at,
+):
     ap_scores = torch.zeros(len(query_features), dtype=torch.float32)
     precision_scores = torch.zeros(len(query_features), dtype=torch.float32)
 
@@ -297,7 +304,28 @@ def compute_retrieval_metrics(query_features, query_labels, gallery_features, ga
         ap_scores[idx] = retrieval_average_precision(similarity, target)
         precision_scores[idx] = retrieval_precision(similarity, target, top_k=precision_at)
 
-    return ap_scores.mean().item(), precision_scores.mean().item()
+    class_ranking = []
+    precision_key = f"P@{precision_at}"
+    for label_idx, classname in enumerate(classnames):
+        mask = query_labels == label_idx
+        if not mask.any():
+            continue
+
+        class_ranking.append(
+            {
+                "class": classname,
+                "mAP": ap_scores[mask].mean().item(),
+                precision_key: precision_scores[mask].mean().item(),
+                "num_queries": int(mask.sum().item()),
+            }
+        )
+
+    class_ranking.sort(
+        key=lambda item: (item["mAP"], item[precision_key], item["class"]),
+        reverse=True,
+    )
+
+    return ap_scores.mean().item(), precision_scores.mean().item(), class_ranking
 
 
 def evaluate_one_dataset(args, dataset_name, device):
@@ -335,11 +363,12 @@ def evaluate_one_dataset(args, dataset_name, device):
     query_features, query_labels = extract_features(model, sketch_loader, classnames, "sketch", device)
     gallery_features, gallery_labels = extract_features(model, photo_loader, classnames, "photo", device)
 
-    mAP_all, precision = compute_retrieval_metrics(
+    mAP_all, precision, class_ranking = compute_retrieval_metrics(
         query_features=query_features,
         query_labels=query_labels,
         gallery_features=gallery_features,
         gallery_labels=gallery_labels,
+        classnames=classnames,
         precision_at=args.precision_at,
     )
 
@@ -352,6 +381,7 @@ def evaluate_one_dataset(args, dataset_name, device):
         "num_gallery": len(photo_dataset),
         "mAP_all": mAP_all,
         f"P@{args.precision_at}": precision,
+        "class_ranking": class_ranking,
         "missing_keys": list(missing),
         "unexpected_keys": list(unexpected),
     }
@@ -376,6 +406,14 @@ def main():
             f"P@{args.precision_at}={result[f'P@{args.precision_at}']:.4f}, "
             f"queries={result['num_queries']}, gallery={result['num_gallery']}"
         )
+        print(f"[{dataset_name}] class ranking (desc by class-wise mAP):")
+        for rank, item in enumerate(result["class_ranking"], start=1):
+            print(
+                f"  {rank:02d}. {item['class']} | "
+                f"mAP={item['mAP']:.4f} | "
+                f"P@{args.precision_at}={item[f'P@{args.precision_at}']:.4f} | "
+                f"queries={item['num_queries']}"
+            )
         if result["missing_keys"] or result["unexpected_keys"]:
             print(f"[{dataset_name}] missing_keys={result['missing_keys']}")
             print(f"[{dataset_name}] unexpected_keys={result['unexpected_keys']}")

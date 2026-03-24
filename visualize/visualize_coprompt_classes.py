@@ -26,6 +26,11 @@ try:
 except ModuleNotFoundError:
     TSNE = None
 
+try:
+    from scipy import linalg
+except ModuleNotFoundError:
+    linalg = None
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -608,6 +613,107 @@ def save_points_csv(points, output_path):
             )
 
 
+def compute_gaussian_stats(features):
+    feature_array = features.detach().cpu().numpy().astype(np.float64)
+    mean = np.mean(feature_array, axis=0)
+    if feature_array.shape[0] <= 1:
+        covariance = np.zeros((feature_array.shape[1], feature_array.shape[1]), dtype=np.float64)
+    else:
+        covariance = np.cov(feature_array, rowvar=False)
+    return mean, covariance
+
+
+def calculate_frechet_distance_from_stats(mean1, cov1, mean2, cov2, eps=1e-6):
+    if linalg is None:
+        raise ModuleNotFoundError(
+            "scipy is required to compute Fréchet distance. Install it with `pip install scipy`."
+        )
+
+    mean1 = np.atleast_1d(mean1)
+    mean2 = np.atleast_1d(mean2)
+    cov1 = np.atleast_2d(cov1)
+    cov2 = np.atleast_2d(cov2)
+
+    diff = mean1 - mean2
+    cov_prod = cov1 @ cov2
+    covmean, _ = linalg.sqrtm(cov_prod, disp=False)
+
+    if not np.isfinite(covmean).all():
+        offset = np.eye(cov1.shape[0]) * eps
+        covmean, _ = linalg.sqrtm((cov1 + offset) @ (cov2 + offset), disp=False)
+
+    if np.iscomplexobj(covmean):
+        covmean = covmean.real
+
+    trace_covmean = np.trace(covmean)
+    distance = diff @ diff + np.trace(cov1) + np.trace(cov2) - 2.0 * trace_covmean
+    return float(max(distance, 0.0))
+
+
+def calculate_frechet_distance(features_a, features_b, eps=1e-6):
+    mean1, cov1 = compute_gaussian_stats(features_a)
+    mean2, cov2 = compute_gaussian_stats(features_b)
+    return calculate_frechet_distance_from_stats(mean1, cov1, mean2, cov2, eps=eps)
+
+
+def compute_frechet_metrics(photo_features, photo_metadata, sketch_features, sketch_metadata, classnames):
+    metrics = {
+        "overall": {
+            "frechet_distance": calculate_frechet_distance(photo_features, sketch_features),
+            "photo_count": int(photo_features.shape[0]),
+            "sketch_count": int(sketch_features.shape[0]),
+        },
+        "per_class": [],
+    }
+
+    photo_labels = [item["class_name"] for item in photo_metadata]
+    sketch_labels = [item["class_name"] for item in sketch_metadata]
+
+    for classname in classnames:
+        photo_indices = [index for index, label in enumerate(photo_labels) if label == classname]
+        sketch_indices = [index for index, label in enumerate(sketch_labels) if label == classname]
+        if not photo_indices or not sketch_indices:
+            continue
+
+        photo_class_features = photo_features[photo_indices]
+        sketch_class_features = sketch_features[sketch_indices]
+        metrics["per_class"].append(
+            {
+                "class_name": classname,
+                "frechet_distance": calculate_frechet_distance(photo_class_features, sketch_class_features),
+                "photo_count": int(photo_class_features.shape[0]),
+                "sketch_count": int(sketch_class_features.shape[0]),
+            }
+        )
+
+    return metrics
+
+
+def save_frechet_csv(frechet_metrics, output_path):
+    fieldnames = ["class_name", "frechet_distance", "photo_count", "sketch_count"]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow(
+            {
+                "class_name": "__overall__",
+                "frechet_distance": f"{frechet_metrics['overall']['frechet_distance']:.8f}",
+                "photo_count": frechet_metrics["overall"]["photo_count"],
+                "sketch_count": frechet_metrics["overall"]["sketch_count"],
+            }
+        )
+        for item in frechet_metrics["per_class"]:
+            writer.writerow(
+                {
+                    "class_name": item["class_name"],
+                    "frechet_distance": f"{item['frechet_distance']:.8f}",
+                    "photo_count": item["photo_count"],
+                    "sketch_count": item["sketch_count"],
+                }
+            )
+
+
 def make_output_dir(args):
     if args.output_dir:
         return Path(args.output_dir)
@@ -678,6 +784,13 @@ def main():
     all_metadata = photo_metadata + sketch_metadata
     coords, projection_info = compute_projection(all_features, args)
     coords = apply_layout(coords, all_metadata, args.classes, args.layout)
+    frechet_metrics = compute_frechet_metrics(
+        photo_features=photo_features,
+        photo_metadata=photo_metadata,
+        sketch_features=sketch_features,
+        sketch_metadata=sketch_metadata,
+        classnames=args.classes,
+    )
 
     points = []
     for meta, coord in zip(all_metadata, coords.tolist()):
@@ -707,6 +820,7 @@ def main():
         args=args,
     )
     save_points_csv(points, output_dir / "embedding_points.csv")
+    save_frechet_csv(frechet_metrics, output_dir / "frechet_distance.csv")
 
     summary = {
         "checkpoint": str(ckpt_path),
@@ -718,6 +832,7 @@ def main():
         "layout": args.layout,
         "num_photo_samples": len(photo_dataset),
         "num_sketch_samples": len(sketch_dataset),
+        "frechet": frechet_metrics,
         "photo_stats": photo_dataset.stats,
         "sketch_stats": sketch_dataset.stats,
         "missing_keys": missing_keys,
@@ -726,6 +841,7 @@ def main():
             "photo_embedding": str(output_dir / "photo_embedding.png"),
             "sketch_embedding": str(output_dir / "sketch_embedding.png"),
             "embedding_points": str(output_dir / "embedding_points.csv"),
+            "frechet_distance": str(output_dir / "frechet_distance.csv"),
         },
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -739,10 +855,18 @@ def main():
     print(f"Layout          : {args.layout}")
     print(f"Photo samples   : {len(photo_dataset)}")
     print(f"Sketch samples  : {len(sketch_dataset)}")
+    print(f"Frechet overall : {frechet_metrics['overall']['frechet_distance']:.6f}")
     print(f"Saved photo     : {output_dir / 'photo_embedding.png'}")
     print(f"Saved sketch    : {output_dir / 'sketch_embedding.png'}")
     print(f"Saved CSV       : {output_dir / 'embedding_points.csv'}")
+    print(f"Saved Frechet   : {output_dir / 'frechet_distance.csv'}")
     print(f"Saved summary   : {output_dir / 'summary.json'}")
+    for item in frechet_metrics["per_class"]:
+        print(
+            f"Frechet[{item['class_name']}] : "
+            f"{item['frechet_distance']:.6f} "
+            f"(photo={item['photo_count']}, sketch={item['sketch_count']})"
+        )
     if missing_keys:
         print(f"Missing keys    : {missing_keys}")
     if unexpected_keys:

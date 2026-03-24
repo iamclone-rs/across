@@ -2,3 +2,5 @@ torchmetrics
 pytorch-lightning
 ftfy
 bresenham
+matplotlib
+scikit-learn

@@ -311,6 +311,12 @@ def parse_args():
         help="Number of thumbnails per class for the saved sample grid.",
     )
     parser.add_argument(
+        "--save_combined_grid",
+        type=str2bool,
+        default=False,
+        help="Whether to also save a combined photo+sketch grid.",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="cuda" if torch.cuda.is_available() else "cpu",
@@ -594,6 +600,43 @@ def load_thumbnail(image_path, size):
     return ImageOps.pad(image, (size, size), color=(255, 255, 255))
 
 
+def save_single_domain_grid(dataset, classnames, samples_per_class, title, output_path):
+    thumb_size = 112
+    padding = 12
+    label_width = 170
+    header_height = 52
+    row_height = thumb_size + padding
+    grid_width = max(samples_per_class, 1) * (thumb_size + padding)
+
+    width = padding * 3 + label_width + grid_width
+    height = padding * 2 + header_height + len(classnames) * row_height
+
+    canvas = Image.new("RGB", (width, height), color=(248, 247, 243))
+    draw = ImageDraw.Draw(canvas)
+    font = ImageFont.load_default()
+
+    x_class = padding
+    x_samples = padding * 2 + label_width
+
+    draw.text((x_class, padding), "Class", fill=(20, 20, 20), font=font)
+    draw.text((x_samples, padding), title, fill=(20, 20, 20), font=font)
+
+    for row_index, classname in enumerate(classnames):
+        y = padding + header_height + row_index * row_height
+        draw.text((x_class, y + thumb_size // 2 - 6), classname, fill=(20, 20, 20), font=font)
+
+        image_paths = dataset.class_to_paths[classname][:samples_per_class]
+        for col_index, image_path in enumerate(image_paths):
+            thumb = load_thumbnail(image_path, thumb_size)
+            canvas.paste(
+                thumb,
+                (x_samples + col_index * (thumb_size + padding), y),
+            )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(output_path)
+
+
 def save_sample_grid(photo_dataset, sketch_dataset, classnames, samples_per_class, output_path):
     thumb_size = 96
     padding = 12
@@ -755,13 +798,28 @@ def main():
         ckpt_name=ckpt_path.name,
         output_path=output_dir / "embedding_pca.png",
     )
-    save_sample_grid(
-        photo_dataset=photo_dataset,
-        sketch_dataset=sketch_dataset,
+    save_single_domain_grid(
+        dataset=photo_dataset,
         classnames=args.classes,
         samples_per_class=max(args.grid_samples_per_class, 1),
-        output_path=output_dir / "sample_grid.png",
+        title="Photo samples",
+        output_path=output_dir / "photo_grid.png",
     )
+    save_single_domain_grid(
+        dataset=sketch_dataset,
+        classnames=args.classes,
+        samples_per_class=max(args.grid_samples_per_class, 1),
+        title="Sketch samples",
+        output_path=output_dir / "sketch_grid.png",
+    )
+    if args.save_combined_grid:
+        save_sample_grid(
+            photo_dataset=photo_dataset,
+            sketch_dataset=sketch_dataset,
+            classnames=args.classes,
+            samples_per_class=max(args.grid_samples_per_class, 1),
+            output_path=output_dir / "sample_grid.png",
+        )
     save_points_csv(points, output_dir / "points.csv")
 
     summary = {
@@ -782,10 +840,13 @@ def main():
         "unexpected_keys": unexpected_keys,
         "outputs": {
             "embedding_plot": str(output_dir / "embedding_pca.png"),
-            "sample_grid": str(output_dir / "sample_grid.png"),
+            "photo_grid": str(output_dir / "photo_grid.png"),
+            "sketch_grid": str(output_dir / "sketch_grid.png"),
             "points_csv": str(output_dir / "points.csv"),
         },
     }
+    if args.save_combined_grid:
+        summary["outputs"]["sample_grid"] = str(output_dir / "sample_grid.png")
     (output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2),
         encoding="utf-8",
@@ -799,7 +860,10 @@ def main():
     print(f"Photo samples   : {len(photo_dataset)}")
     print(f"Sketch samples  : {len(sketch_dataset)}")
     print(f"Saved plot      : {output_dir / 'embedding_pca.png'}")
-    print(f"Saved grid      : {output_dir / 'sample_grid.png'}")
+    print(f"Saved photos    : {output_dir / 'photo_grid.png'}")
+    print(f"Saved sketches  : {output_dir / 'sketch_grid.png'}")
+    if args.save_combined_grid:
+        print(f"Saved grid      : {output_dir / 'sample_grid.png'}")
     print(f"Saved CSV       : {output_dir / 'points.csv'}")
     print(f"Saved summary   : {output_dir / 'summary.json'}")
     if missing_keys:
